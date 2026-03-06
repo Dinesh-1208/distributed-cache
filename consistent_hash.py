@@ -9,7 +9,9 @@ class ConsistentHashRing:
         self.nodes = set()
 
     def _hash(self, key):
-        return int(hashlib.md5(key.encode('utf-8')).hexdigest(), 16)
+        # Switched to SHA-256: 256-bit hash provides astronomical resilience 
+        # against generic collisions for 5 billion users compared to MD5.
+        return int(hashlib.sha256(key.encode('utf-8')).hexdigest(), 16)
 
     def add_node(self, node):
         if node in self.nodes:
@@ -17,7 +19,17 @@ class ConsistentHashRing:
         self.nodes.add(node)
         for i in range(self.virtual_nodes):
             v_node_key = f"{node}-{i}"
-            h = self._hash(v_node_key)
+            original_h = self._hash(v_node_key)
+            h = original_h
+            
+            # Collision Resolution Mechanism (Quadratic Probing)
+            # If a hash slot is taken by another node, we step away using i^2.
+            # Using 2**256 as the modulo space since we are using SHA-256.
+            attempt = 0
+            while h in self.ring and self.ring[h] != node:
+                attempt += 1
+                h = (original_h + attempt**2) % (2**256)
+                
             self.ring[h] = node
             self.sorted_keys.append(h)
         self.sorted_keys.sort()
@@ -28,12 +40,22 @@ class ConsistentHashRing:
         self.nodes.remove(node)
         for i in range(self.virtual_nodes):
             v_node_key = f"{node}-{i}"
-            h = self._hash(v_node_key)
-            self.ring.pop(h, None)
-            try:
-                self.sorted_keys.remove(h)
-            except ValueError:
-                pass
+            original_h = self._hash(v_node_key)
+            h = original_h
+            
+            # Same Collision Resolution traversal to successfully find and remove the precise quadratically-probed hash
+            attempt = 0
+            while h in self.ring:
+                if self.ring[h] == node:
+                    self.ring.pop(h, None)
+                    try:
+                        self.sorted_keys.remove(h)
+                    except ValueError:
+                        pass
+                    break  # Found and removed our node's hash, exit while
+                else:
+                    attempt += 1
+                    h = (original_h + attempt**2) % (2**256)
 
     def get_nodes(self, key, count=2):
         if not self.ring:
