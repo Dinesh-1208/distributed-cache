@@ -11,10 +11,12 @@ from node_persistence import NodePersistence
 logger = get_logger("node")
 
 class CacheNode:
-    def __init__(self, host, port, coordinator_host=COORDINATOR_HOST, coordinator_port=COORDINATOR_PORT, policy=DEFAULT_EVICTION_POLICY):
+    def __init__(self, host, port, coordinator_host=COORDINATOR_HOST, coordinator_port=COORDINATOR_PORT, policy=DEFAULT_EVICTION_POLICY, advertise_host=None):
         self.host = host
         self.port = port
-        self.address = f"{host}:{port}"
+        # advertise_host is the hostname other services use to reach this node (e.g. Docker service name)
+        self.advertise_host = advertise_host or host
+        self.address = f"{self.advertise_host}:{port}"
         self.coordinator_host = coordinator_host
         self.coordinator_port = coordinator_port
         
@@ -48,17 +50,23 @@ class CacheNode:
             self.persistence.stop()
             self.server_socket.close()
 
-    def register_with_coordinator(self):
-        try:
-            with socket.create_connection((self.coordinator_host, self.coordinator_port), timeout=SOCKET_TIMEOUT) as sock:
-                send_message(sock, {"cmd": "REGISTER", "node": self.address})
-                resp = receive_message(sock)
-                if resp and resp.get("status") == "OK":
-                    logger.info("Successfully registered with coordinator")
-                else:
-                    logger.error("Registration failed")
-        except Exception as e:
-            logger.error(f"Could not connect to coordinator at {self.coordinator_host}:{self.coordinator_port}: {e}")
+    def register_with_coordinator(self, retries=10, delay=2):
+        for attempt in range(1, retries + 1):
+            try:
+                with socket.create_connection((self.coordinator_host, self.coordinator_port), timeout=SOCKET_TIMEOUT) as sock:
+                    send_message(sock, {"cmd": "REGISTER", "node": self.address})
+                    resp = receive_message(sock)
+                    if resp and resp.get("status") == "OK":
+                        logger.info("Successfully registered with coordinator")
+                        return
+                    else:
+                        logger.error("Registration failed")
+            except Exception as e:
+                logger.warning(f"Attempt {attempt}/{retries} - Could not connect to coordinator at {self.coordinator_host}:{self.coordinator_port}: {e}")
+                if attempt < retries:
+                    import time
+                    time.sleep(delay)
+        logger.error("Failed to register with coordinator after all retries")
 
     def _handle_request(self, client_sock, addr):
         try:
@@ -113,10 +121,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", required=True, type=str)
     parser.add_argument("--port", required=True, type=int)
+    parser.add_argument("--advertise-host", default=None, type=str, help="Hostname to advertise to coordinator (e.g. Docker service name)")
     parser.add_argument("--coordinator-host", default=COORDINATOR_HOST, type=str)
     parser.add_argument("--coordinator-port", default=COORDINATOR_PORT, type=int)
     parser.add_argument("--policy", default=DEFAULT_EVICTION_POLICY, choices=["LRU", "LFU"])
     args = parser.parse_args()
     
-    node = CacheNode(args.host, args.port, args.coordinator_host, args.coordinator_port, args.policy)
+    node = CacheNode(args.host, args.port, args.coordinator_host, args.coordinator_port, args.policy, args.advertise_host)
     node.start()

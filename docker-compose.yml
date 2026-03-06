@@ -1,0 +1,84 @@
+services:
+  coordinator:
+    build: .
+    container_name: coordinator
+    command: python coordinator.py --host 0.0.0.0 --port 5000
+    ports:
+      - "5000:5000"
+    networks:
+      - cache-net
+    volumes:
+      - coordinator-data:/app
+
+  node1:
+    build: .
+    container_name: node1
+    command: >
+      python node.py
+        --host 0.0.0.0
+        --port 5001
+        --advertise-host node1
+        --coordinator-host coordinator
+        --coordinator-port 5000
+        --policy LRU
+    ports:
+      - "5001:5001"
+    depends_on:
+      - coordinator
+    networks:
+      - cache-net
+    volumes:
+      - node1-data:/app
+    restart: on-failure
+
+  node2:
+    build: .
+    container_name: node2
+    command: >
+      python node.py
+        --host 0.0.0.0
+        --port 5002
+        --advertise-host node2
+        --coordinator-host coordinator
+        --coordinator-port 5000
+        --policy LRU
+    ports:
+      - "5002:5002"
+    depends_on:
+      - coordinator
+    networks:
+      - cache-net
+    volumes:
+      - node2-data:/app
+    restart: on-failure
+
+  node3:
+    build: .
+    container_name: node3
+    command: >
+      python node.py
+        --host 0.0.0.0
+        --port 5003
+        --advertise-host node3
+        --coordinator-host coordinator
+        --coordinator-port 5000
+        --policy LRU
+    ports:
+      - "5003:5003"
+    depends_on:
+      - coordinator
+    networks:
+      - cache-net
+    volumes:
+      - node3-data:/app
+    restart: on-failure
+
+networks:
+  cache-net:
+    driver: bridge
+
+volumes:
+  coordinator-data:
+  node1-data:
+  node2-data:
+  node3-data:
